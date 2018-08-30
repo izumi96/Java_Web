@@ -1,10 +1,19 @@
 package com.izumi.myletter.common;
 
 
+
+
 /**
  * 统一返回格式 工具类
  */
 public class ResultUtil {
+
+    public static Result fileFail(){
+        Result result = new Result();
+        result.setStatus(Constants.RESULT_FILE_NULL);
+        result.setMessage(Constants.RESULT_MESSAGE_FILENULL);
+        return result;
+    }
 
     //成功，有返回数据
     public static Result success(Object object){
