@@ -1,23 +1,178 @@
 package com.izumi.myletter.common;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
-import java.io.File;
+import javax.servlet.http.HttpServletResponse;
 
-@Component
-@ConfigurationProperties(prefix = "ftp")
-public class FTPUtils {,
+import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.net.ftp.FTPClient;
+import org.apache.commons.net.ftp.FTPFile;
+import org.apache.commons.pool2.ObjectPool;
 
-    private static int downloadSleep;
+import org.springframework.util.Assert;
 
-    private static int downloadRetry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-    private static int uploadSleep;
+/**
+ * Ftp工具类
+ * @author wxyh
+ */
 
-    private static int uploadRetry;
+public class FTPUtils {
+    //定义日志对象
+    private  final static Logger logger = LoggerFactory.getLogger(FTPUtils.class);
 
-    public static boolean doUpLoad(String ftpPath,File file){
+    /**
+     * ftpClient连接池初始化标志
+     */
+    private static volatile boolean hasInit = false;
+    /**
+     * ftpClient连接池
+     */
+    private static ObjectPool<FTPClient> ftpClientPool;
 
+    /**
+     * 初始化ftpClientPool
+     *
+     * @param ftpClientPool
+     */
+    public static void init(ObjectPool<FTPClient> ftpClientPool) {
+        if (!hasInit) {
+            synchronized (FTPUtils.class) {
+                if (!hasInit) {
+                    FTPUtils.ftpClientPool = ftpClientPool;
+                    hasInit = true;
+                }
+            }
+        }
     }
+
+
+    /**
+     * 按行读取FTP文件
+     *
+     * @param remoteFilePath 文件路径（path+fileName）
+     * @return
+     * @throws IOException
+     */
+    public static List<String> readFileByLine(String remoteFilePath) throws IOException {
+        FTPClient ftpClient = getFtpClient();
+        try (InputStream in = ftpClient.retrieveFileStream(encodingPath(remoteFilePath));
+             BufferedReader br = new BufferedReader(new InputStreamReader(in))) {
+            return br.lines().map(line -> StringUtils.trimToEmpty(line))
+                    .filter(line -> StringUtils.isNotEmpty(line)).collect(Collectors.toList());
+        } finally {
+            ftpClient.completePendingCommand();
+            releaseFtpClient(ftpClient);
+        }
+    }
+
+    /**
+     * 获取指定路径下FTP文件
+     *
+     * @param remotePath 路径
+     * @return FTPFile数组
+     * @throws IOException
+     */
+    public static FTPFile[] retrieveFTPFiles(String remotePath) throws IOException {
+        FTPClient ftpClient = getFtpClient();
+        try {
+            return ftpClient.listFiles(encodingPath(remotePath + "/"),
+                    file -> file != null && file.getSize() > 0);
+        } finally {
+            releaseFtpClient(ftpClient);
+        }
+    }
+
+    /**
+     * 获取指定路径下FTP文件名称
+     *
+     * @param remotePath 路径
+     * @return ftp文件名称列表
+     * @throws IOException
+     */
+    public static List<String> retrieveFileNames(String remotePath) throws IOException {
+        FTPFile[] ftpFiles = retrieveFTPFiles(remotePath);
+        if (ArrayUtils.isEmpty(ftpFiles)) {
+            return new ArrayList<>();
+        }
+        return Arrays.stream(ftpFiles).filter(Objects::nonNull)
+                .map(FTPFile::getName).collect(Collectors.toList());
+    }
+
+    /**
+     * 编码文件路径
+     */
+    private static String encodingPath(String path) throws UnsupportedEncodingException {
+        // FTP协议里面，规定文件名编码为iso-8859-1，所以目录名或文件名需要转码
+        return new String(path.replaceAll("//", "/").getBytes("GBK"), "iso-8859-1");
+    }
+
+    /**
+     * 获取ftpClient
+     *
+     * @return
+     */
+    private static FTPClient getFtpClient() {
+        checkFtpClientPoolAvailable();
+        FTPClient ftpClient = null;
+        Exception ex = null;
+        // 获取连接最多尝试3次
+        for (int i = 0; i < 3; i++) {
+            try {
+                ftpClient = ftpClientPool.borrowObject();
+                ftpClient.changeWorkingDirectory("/");
+                break;
+            } catch (Exception e) {
+                ex = e;
+            }
+        }
+        if (ftpClient == null) {
+            throw new RuntimeException("Could not get a ftpClient from the pool", ex);
+        }
+        return ftpClient;
+    }
+
+    /**
+     * 释放ftpClient
+     */
+    private static void releaseFtpClient(FTPClient ftpClient) {
+        if (ftpClient == null) {
+            return;
+        }
+
+        try {
+            ftpClientPool.returnObject(ftpClient);
+        } catch (Exception e) {
+            logger.error("Could not return the ftpClient to the pool", e);
+            // destoryFtpClient
+            if (ftpClient.isAvailable()) {
+                try {
+                    ftpClient.disconnect();
+                } catch (IOException io) {
+                }
+            }
+        }
+    }
+
+    /**
+     * 检查ftpClientPool是否可用
+     */
+    private static void checkFtpClientPoolAvailable() {
+        Assert.state(hasInit, "FTP未启用或连接失败！");
+    }
+
+
 }

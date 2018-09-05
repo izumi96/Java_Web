@@ -18,9 +18,9 @@ import java.util.List;
 @RequestMapping(value = "/upanddown")
 public class UpLoadController {
 
-    /**单文件上传，主要用到的是MultipartFile获取前端post请求的图片
+    /**单文件上传，主要用到的是MultipartFile获取前端post请求的所有文件
      * 普通上传
-     * 字节流有些文件传不上去,试了一下xmind是不行的
+     *
      * */
     @RequestMapping(value = "/upload", method = RequestMethod.POST)
     @ResponseBody
@@ -45,14 +45,15 @@ public class UpLoadController {
 
     @RequestMapping(value = "/upload2",method = RequestMethod.POST)
     @ResponseBody
-    public Result multiUpload(@RequestParam MultipartFile[] files){
+    public Result multiUpload(@RequestParam String terminalid,
+            @RequestParam MultipartFile[] files){
+        System.out.println(terminalid);
         Result result = new Result();
         if(files.length == 0){
             return ResultUtil.fileFail();
         }
             for(MultipartFile temp: files){
             try{
-                //字节数组写入磁盘
                 byte[] bytes = temp.getBytes();
                 Path path = Paths.get("F://test/" + temp.getOriginalFilename());
                 Files.write(path, bytes);
